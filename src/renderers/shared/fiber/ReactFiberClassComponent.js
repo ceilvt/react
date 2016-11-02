@@ -69,7 +69,14 @@ module.exports = function(scheduleUpdate : (fiber: Fiber, priorityLevel : ?Prior
       }
       scheduleUpdateQueue(fiber, updateQueue);
     },
-    isFiberUpdater: true,
+    enqueueCallback(instance, callback) {
+      const fiber = ReactInstanceMap.get(instance);
+      let updateQueue = fiber.updateQueue ?
+        fiber.updateQueue :
+        createUpdateQueue(null);
+      addCallbackToQueue(updateQueue, callback);
+      scheduleUpdateQueue(fiber, updateQueue);
+    },
   };
 
   function checkShouldComponentUpdate(workInProgress, oldProps, newProps, newState) {
@@ -210,9 +217,19 @@ module.exports = function(scheduleUpdate : (fiber: Fiber, priorityLevel : ?Prior
     // TODO: Previous state can be null.
     let newState;
     if (updateQueue) {
-      newState = mergeUpdateQueue(updateQueue, instance, previousState, newProps);
+      if (!updateQueue.hasUpdate) {
+        newState = previousState;
+      } else {
+        newState = mergeUpdateQueue(updateQueue, instance, previousState, newProps);
+      }
     } else {
       newState = previousState;
+    }
+
+    if (oldProps === newProps &&
+        previousState === newState &&
+        updateQueue && !updateQueue.isForced) {
+      return false;
     }
 
     if (!checkShouldComponentUpdate(

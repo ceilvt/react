@@ -39,6 +39,11 @@ var {
   Update,
   PlacementAndUpdate,
   Deletion,
+  Callback,
+  PlacementAndCallback,
+  UpdateAndCallback,
+  PlacementAndUpdateAndCallback,
+  DeletionAndCallback,
 } = require('ReactTypeOfSideEffect');
 
 var {
@@ -139,28 +144,34 @@ module.exports = function<T, P, I, TI, C>(config : HostConfig<T, P, I, TI, C>) {
     let effectfulFiber = finishedWork.firstEffect;
     while (effectfulFiber) {
       switch (effectfulFiber.effectTag) {
-        case Placement: {
+        case Placement:
+        case PlacementAndCallback: {
           commitInsertion(effectfulFiber);
-          // Clear the effect tag so that we know that this is inserted, before
+          // Clear the "placement" from effect tag so that we know that this is inserted, before
           // any life-cycles like componentDidMount gets called.
           effectfulFiber.effectTag = NoEffect;
           break;
         }
-        case PlacementAndUpdate: {
+        case PlacementAndUpdate:
+        case PlacementAndUpdateAndCallback: {
+          // Placement
           commitInsertion(effectfulFiber);
-          const current = effectfulFiber.alternate;
-          commitWork(current, effectfulFiber);
           // Clear the "placement" from effect tag so that we know that this is inserted, before
           // any life-cycles like componentDidMount gets called.
           effectfulFiber.effectTag = Update;
-          break;
-        }
-        case Update: {
+
+          // Update
           const current = effectfulFiber.alternate;
           commitWork(current, effectfulFiber);
           break;
         }
-        case Deletion: {
+        case Update:
+        case UpdateAndCallback:
+          const current = effectfulFiber.alternate;
+          commitWork(current, effectfulFiber);
+          break;
+        case Deletion:
+        case DeletionAndCallback:
           // Deletion might cause an error in componentWillUnmount().
           // We will continue nevertheless and handle those later on.
           const trappedErrors = commitDeletion(effectfulFiber);
@@ -176,8 +187,8 @@ module.exports = function<T, P, I, TI, C>(config : HostConfig<T, P, I, TI, C>) {
             }
           }
           break;
-        }
       }
+
       effectfulFiber = effectfulFiber.nextEffect;
     }
 
@@ -186,8 +197,7 @@ module.exports = function<T, P, I, TI, C>(config : HostConfig<T, P, I, TI, C>) {
     // already been invoked.
     effectfulFiber = finishedWork.firstEffect;
     while (effectfulFiber) {
-      if (effectfulFiber.effectTag === Update ||
-          effectfulFiber.effectTag === PlacementAndUpdate) {
+      if (effectfulFiber.effectTag & (Update | Callback)) {
         const current = effectfulFiber.alternate;
         const trappedError = commitLifeCycles(current, effectfulFiber);
         if (trappedError) {
@@ -546,16 +556,16 @@ module.exports = function<T, P, I, TI, C>(config : HostConfig<T, P, I, TI, C>) {
     try {
       if (priorityLevel === SynchronousPriority) {
         performSynchronousWorkUnsafe();
-      }
-      if (priorityLevel > AnimationPriority) {
+      } else if (priorityLevel > AnimationPriority) {
         if (!deadline) {
           throw new Error('No deadline');
         } else {
           performDeferredWorkUnsafe(deadline);
         }
         return;
+      } else {
+        performAnimationWorkUnsafe();
       }
-      performAnimationWorkUnsafe();
     } catch (error) {
       const failedUnitOfWork = nextUnitOfWork;
       // Reset because it points to the error boundary:
@@ -644,18 +654,16 @@ module.exports = function<T, P, I, TI, C>(config : HostConfig<T, P, I, TI, C>) {
       priorityLevel = priorityContext;
     }
 
-    if (priorityLevel === SynchronousPriority) {
-      scheduleSynchronousWork(root);
-    }
-
     if (priorityLevel === NoWork) {
       return;
-    }
-    if (priorityLevel > AnimationPriority) {
+    } else if (priorityLevel === SynchronousPriority) {
+      scheduleSynchronousWork(root);
+    } else if (priorityLevel <= AnimationPriority) {
+      scheduleAnimationWork(root, priorityLevel);
+    } else {
       scheduleDeferredWork(root, priorityLevel);
       return;
     }
-    scheduleAnimationWork(root, priorityLevel);
   }
 
   function scheduleUpdate(fiber: Fiber, priorityLevel : ?PriorityLevel): void {
